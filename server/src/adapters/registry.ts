@@ -450,7 +450,7 @@ const kimiLocalAdapter: ServerAdapterModule = {
   execute: kimiExecute,
   testEnvironment: kimiTestEnvironment,
   models: kimiModels,
-  supportsLocalAgentJwt: false,
+  supportsLocalAgentJwt: true,
   supportsInstructionsBundle: false,
   requiresMaterializedRuntimeSkills: false,
   agentConfigurationDoc: kimiAgentConfigurationDoc,
