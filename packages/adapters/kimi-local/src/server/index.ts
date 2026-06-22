@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
 import { DEFAULT_KIMI_MODEL } from "../index.js";
 
@@ -20,8 +19,7 @@ function getTask(context: Record<string, unknown>): string {
 }
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
-  const apiKey =
-    typeof ctx.config.apiKey === "string" ? ctx.config.apiKey.trim() : "";
+  const apiKey = typeof ctx.config.apiKey === "string" ? ctx.config.apiKey.trim() : "";
 
   if (!apiKey) {
     return {
@@ -43,33 +41,62 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       : "You are a senior software engineer. Respond with clear, actionable output.";
 
   const task = getTask(ctx.context);
-
-  const kimi = new OpenAI({ apiKey, baseURL: MOONSHOT_BASE_URL });
-
   await ctx.onLog("stdout", `[kimi] model=${model}\n\n`);
 
   let inputTokens = 0;
   let outputTokens = 0;
 
   try {
-    const stream = await kimi.chat.completions.create({
-      model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: task },
-      ],
-      stream: true,
-      stream_options: { include_usage: true },
+    const res = await fetch(`${MOONSHOT_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: task },
+        ],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
     });
 
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta?.content ?? "";
-      if (delta) {
-        await ctx.onLog("stdout", delta);
-      }
-      if (chunk.usage) {
-        inputTokens = chunk.usage.prompt_tokens ?? 0;
-        outputTokens = chunk.usage.completion_tokens ?? 0;
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`Moonshot API ${res.status}: ${errText.slice(0, 200)}`);
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error("No response body");
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.replace(/^data: /, "").trim();
+        if (!trimmed || trimmed === "[DONE]") continue;
+        try {
+          const chunk = JSON.parse(trimmed);
+          const delta = chunk.choices?.[0]?.delta?.content ?? "";
+          if (delta) await ctx.onLog("stdout", delta);
+          if (chunk.usage) {
+            inputTokens = chunk.usage.prompt_tokens ?? 0;
+            outputTokens = chunk.usage.completion_tokens ?? 0;
+          }
+        } catch {
+          // skip malformed SSE line
+        }
       }
     }
 
@@ -77,14 +104,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await ctx.onLog("stderr", `[kimi] error: ${msg}\n`);
-    return {
-      exitCode: 1,
-      signal: null,
-      timedOut: false,
-      errorMessage: msg,
-      provider: "moonshot",
-      model,
-    };
+    return { exitCode: 1, signal: null, timedOut: false, errorMessage: msg, provider: "moonshot", model };
   }
 
   const costUsd = inputTokens * 0.0000006 + outputTokens * 0.0000025;
@@ -102,57 +122,33 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   };
 }
 
-export async function testEnvironment(ctx: import("@paperclipai/adapter-utils").AdapterEnvironmentTestContext): Promise<import("@paperclipai/adapter-utils").AdapterEnvironmentTestResult> {
-  const apiKey =
-    typeof ctx.config.apiKey === "string" ? ctx.config.apiKey.trim() : "";
+export async function testEnvironment(
+  ctx: import("@paperclipai/adapter-utils").AdapterEnvironmentTestContext,
+): Promise<import("@paperclipai/adapter-utils").AdapterEnvironmentTestResult> {
+  const apiKey = typeof ctx.config.apiKey === "string" ? ctx.config.apiKey.trim() : "";
   const now = new Date().toISOString();
 
   if (!apiKey) {
     return {
-      adapterType: ctx.adapterType,
-      status: "fail",
-      testedAt: now,
-      checks: [
-        {
-          code: "kimi_api_key_missing",
-          level: "error",
-          message: "Kimi API key not configured",
-          detail: "Set apiKey in the agent configuration.",
-        },
-      ],
+      adapterType: ctx.adapterType, status: "fail", testedAt: now,
+      checks: [{ code: "kimi_api_key_missing", level: "error", message: "Kimi API key not configured" }],
     };
   }
 
-  const kimi = new OpenAI({ apiKey, baseURL: MOONSHOT_BASE_URL });
-
   try {
-    await kimi.models.list();
+    const res = await fetch(`${MOONSHOT_BASE_URL}/models`, {
+      headers: { "Authorization": `Bearer ${apiKey}` },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return {
-      adapterType: ctx.adapterType,
-      status: "pass",
-      testedAt: now,
-      checks: [
-        {
-          code: "kimi_api_key_ok",
-          level: "info",
-          message: "Moonshot API key verified",
-        },
-      ],
+      adapterType: ctx.adapterType, status: "pass", testedAt: now,
+      checks: [{ code: "kimi_api_key_ok", level: "info", message: "Moonshot API key verified" }],
     };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
     return {
-      adapterType: ctx.adapterType,
-      status: "fail",
-      testedAt: now,
-      checks: [
-        {
-          code: "kimi_api_key_invalid",
-          level: "error",
-          message: "Moonshot API key check failed",
-          detail: msg,
-        },
-      ],
+      adapterType: ctx.adapterType, status: "fail", testedAt: now,
+      checks: [{ code: "kimi_api_key_invalid", level: "error", message: "Moonshot API key check failed",
+        detail: err instanceof Error ? err.message : String(err) }],
     };
   }
 }

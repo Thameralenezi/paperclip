@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1.20
+# Incremental patch: inject kimi adapter source + updated server dist.
+# Uses tsx loader already in the production image — zero new npm deps.
+FROM 606754308994.dkr.ecr.eu-north-1.amazonaws.com/cdk-hnb659fds-container-assets-606754308994-eu-north-1:paperclip-healthfix-1781011666
+
+WORKDIR /app
+
+# 1. Copy kimi-local package metadata + TypeScript source (no external deps)
+COPY --chown=node:node packages/adapters/kimi-local/package.json packages/adapters/kimi-local/package.json
+COPY --chown=node:node packages/adapters/kimi-local/tsconfig.json packages/adapters/kimi-local/tsconfig.json
+COPY --chown=node:node packages/adapters/kimi-local/src packages/adapters/kimi-local/src
+
+# 2. Create workspace symlink so Node resolves @paperclipai/adapter-kimi-local
+RUN mkdir -p node_modules/@paperclipai && \
+    ln -sfn /app/packages/adapters/kimi-local node_modules/@paperclipai/adapter-kimi-local
+
+# 3. Replace server dist with freshly compiled version (includes kimi registry entries)
+COPY --chown=node:node server/dist server/dist

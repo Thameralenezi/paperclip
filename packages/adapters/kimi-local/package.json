@@ -34,8 +34,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@paperclipai/adapter-utils": "workspace:*",
-    "openai": "^4.52.0"
+    "@paperclipai/adapter-utils": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",
