@@ -1,19 +1,41 @@
 import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
 import { DEFAULT_KIMI_MODEL, DEFAULT_KIMI_BASE_URL } from "../index.js";
 
-function getTask(context: Record<string, unknown>): string {
-  const taskMd = context.paperclipTaskMarkdown;
-  if (typeof taskMd === "string" && taskMd.trim()) return taskMd.trim();
+function buildPrompt(ctx: AdapterExecutionContext): string {
+  const config = ctx.config;
+  const context = ctx.context;
 
+  // 1. Explicit prompt template (set in agent config — most agents use this)
+  const promptTemplate = typeof config.promptTemplate === "string" && config.promptTemplate.trim()
+    ? config.promptTemplate.trim() : "";
+
+  // 2. Structured task markdown from Paperclip (set when issue is assigned)
+  const taskMd = typeof context.paperclipTaskMarkdown === "string" && context.paperclipTaskMarkdown.trim()
+    ? context.paperclipTaskMarkdown.trim() : "";
+
+  // 3. Wake comment body
   const wakeComment = context.paperclipWakeComment as Record<string, unknown> | undefined;
-  const wakeBody = wakeComment?.body;
-  if (typeof wakeBody === "string" && wakeBody.trim()) return wakeBody.trim();
+  const wakeBody = typeof wakeComment?.body === "string" && wakeComment.body.trim()
+    ? wakeComment.body.trim() : "";
 
+  // 4. Issue details
   const issue = context.paperclipIssue as Record<string, unknown> | undefined;
-  const description = issue?.description;
-  if (typeof description === "string" && description.trim()) return description.trim();
+  const issueTitle = typeof issue?.title === "string" ? issue.title.trim() : "";
+  const issueDesc = typeof issue?.description === "string" ? issue.description.trim() : "";
+  const issueText = [issueTitle, issueDesc].filter(Boolean).join("\n\n");
 
-  return "(no task provided)";
+  // Build final prompt: combine all available context
+  const parts: string[] = [];
+  if (promptTemplate) parts.push(promptTemplate);
+  if (taskMd) parts.push(`## Task\n${taskMd}`);
+  if (wakeBody) parts.push(`## Instructions\n${wakeBody}`);
+  if (issueText) parts.push(`## Issue\n${issueText}`);
+
+  if (parts.length === 0) {
+    return "You are a software engineer. No specific task was assigned. Review your current work queue and report your status.";
+  }
+
+  return parts.join("\n\n---\n\n");
 }
 
 function getBaseUrl(config: Record<string, unknown>): string {
@@ -43,14 +65,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? ctx.config.systemPrompt.trim()
       : "You are a senior software engineer. Respond with clear, actionable output.";
 
-  const task = getTask(ctx.context);
-  await ctx.onLog("stdout", `[kimi] model=${model} endpoint=${baseUrl}\n\n`);
+  const prompt = buildPrompt(ctx);
+  await ctx.onLog("stdout", `[kimi] model=${model} endpoint=${baseUrl}\n`);
+  await ctx.onLog("stdout", `[kimi] prompt_len=${prompt.length}\n\n`);
 
   let inputTokens = 0;
   let outputTokens = 0;
 
   try {
-    // Non-streaming request — more reliable across Anthropic-compatible APIs
     const res = await fetch(`${baseUrl}/messages`, {
       method: "POST",
       headers: {
@@ -60,44 +82,45 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       },
       body: JSON.stringify({
         model,
-        max_tokens: 8192,
+        max_tokens: 16000,
         system: systemPrompt,
-        messages: [{ role: "user", content: task }],
+        messages: [{ role: "user", content: prompt }],
         stream: false,
       }),
     });
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw new Error(`Kimi API ${res.status}: ${errText.slice(0, 300)}`);
-    }
-
     const rawText = await res.text();
 
-    // Diagnostic: log first 500 chars of raw response so we can see the format
-    await ctx.onLog("stdout", `[kimi raw] ${rawText.slice(0, 500)}\n\n`);
+    if (!res.ok) {
+      throw new Error(`Kimi API ${res.status}: ${rawText.slice(0, 300)}`);
+    }
+
+    // Log raw response for diagnostics (first 800 chars)
+    await ctx.onLog("stdout", `[kimi raw] ${rawText.slice(0, 800)}\n\n`);
 
     let json: Record<string, unknown>;
     try {
       json = JSON.parse(rawText);
     } catch {
-      throw new Error(`Kimi API returned non-JSON: ${rawText.slice(0, 200)}`);
+      throw new Error(`Kimi returned non-JSON: ${rawText.slice(0, 200)}`);
     }
 
-    // Standard Anthropic non-streaming response:
-    // { content: [{type:"text", text:"..."}], usage: {input_tokens, output_tokens} }
+    // Anthropic non-streaming format: { content: [{type:"text", text:"..."}], usage: {...} }
     const contentArr = json.content as Array<Record<string, unknown>> | undefined;
     const text =
       (contentArr?.[0]?.text as string | undefined) ??
-      (typeof json.content === "string" ? json.content : "") ??
+      (typeof json.content === "string" ? json.content : null) ??
+      (json.completion as string | undefined) ??
       "";
 
-    const usage = json.usage as Record<string, number> | undefined;
-    inputTokens = usage?.input_tokens ?? 0;
-    outputTokens = usage?.output_tokens ?? 0;
+    const usage = json.usage as Record<string, unknown> | undefined;
+    inputTokens = (usage?.input_tokens as number | undefined) ?? 0;
+    outputTokens = (usage?.output_tokens as number | undefined) ?? 0;
 
-    if (text) await ctx.onLog("stdout", text);
-    await ctx.onLog("stdout", "\n");
+    if (text) {
+      await ctx.onLog("stdout", text);
+      await ctx.onLog("stdout", "\n");
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await ctx.onLog("stderr", `[kimi] error: ${msg}\n`);
@@ -131,6 +154,6 @@ export async function testEnvironment(
 
   return {
     adapterType: ctx.adapterType, status: "pass", testedAt: now,
-    checks: [{ code: "kimi_ready", level: "info", message: `Kimi Code configured — ${baseUrl}` }],
+    checks: [{ code: "kimi_ready", level: "info", message: `Kimi Code — ${baseUrl}` }],
   };
 }
