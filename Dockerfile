@@ -60,6 +60,7 @@ FROM base AS production
 ARG USER_UID=1000
 ARG USER_GID=1000
 ENV NODE_TLS_REJECT_UNAUTHORIZED=0
+ENV npm_config_strict_ssl=false
 WORKDIR /app
 COPY --chown=node:node --from=build /app /app
 RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai \
