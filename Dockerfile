@@ -13,6 +13,8 @@ RUN usermod -u $USER_UID --non-unique node \
   && usermod -g $USER_GID -d /paperclip node
 
 FROM base AS deps
+# TLS verification bypass required on this network (intermediate cert not trusted by Node)
+ENV NODE_TLS_REJECT_UNAUTHORIZED=0
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY cli/package.json cli/
@@ -45,6 +47,7 @@ COPY scripts/link-plugin-dev-sdk.mjs scripts/
 RUN pnpm install --frozen-lockfile
 
 FROM base AS build
+ENV NODE_TLS_REJECT_UNAUTHORIZED=0
 WORKDIR /app
 COPY --from=deps /app /app
 COPY . .
