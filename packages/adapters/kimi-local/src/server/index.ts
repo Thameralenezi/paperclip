@@ -1,7 +1,5 @@
 import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
-import { DEFAULT_KIMI_MODEL } from "../index.js";
-
-const MOONSHOT_BASE_URL = "https://api.moonshot.cn/v1";
+import { DEFAULT_KIMI_MODEL, DEFAULT_KIMI_BASE_URL } from "../index.js";
 
 function getTask(context: Record<string, unknown>): string {
   const taskMd = context.paperclipTaskMarkdown;
@@ -20,6 +18,10 @@ function getTask(context: Record<string, unknown>): string {
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const apiKey = typeof ctx.config.apiKey === "string" ? ctx.config.apiKey.trim() : "";
+  const baseUrl =
+    typeof ctx.config.baseUrl === "string" && ctx.config.baseUrl.trim()
+      ? ctx.config.baseUrl.trim().replace(/\/$/, "")
+      : DEFAULT_KIMI_BASE_URL;
 
   if (!apiKey) {
     return {
@@ -47,7 +49,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   let outputTokens = 0;
 
   try {
-    const res = await fetch(`${MOONSHOT_BASE_URL}/chat/completions`, {
+    const res = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -126,6 +128,10 @@ export async function testEnvironment(
   ctx: import("@paperclipai/adapter-utils").AdapterEnvironmentTestContext,
 ): Promise<import("@paperclipai/adapter-utils").AdapterEnvironmentTestResult> {
   const apiKey = typeof ctx.config.apiKey === "string" ? ctx.config.apiKey.trim() : "";
+  const baseUrl =
+    typeof ctx.config.baseUrl === "string" && ctx.config.baseUrl.trim()
+      ? ctx.config.baseUrl.trim().replace(/\/$/, "")
+      : DEFAULT_KIMI_BASE_URL;
   const now = new Date().toISOString();
 
   if (!apiKey) {
@@ -136,7 +142,7 @@ export async function testEnvironment(
   }
 
   try {
-    const res = await fetch(`${MOONSHOT_BASE_URL}/models`, {
+    const res = await fetch(`${baseUrl}/models`, {
       headers: { "Authorization": `Bearer ${apiKey}` },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
