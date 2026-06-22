@@ -16,18 +16,19 @@ function getTask(context: Record<string, unknown>): string {
   return "(no task provided)";
 }
 
+function getBaseUrl(config: Record<string, unknown>): string {
+  return typeof config.baseUrl === "string" && config.baseUrl.trim()
+    ? config.baseUrl.trim().replace(/\/$/, "")
+    : DEFAULT_KIMI_BASE_URL;
+}
+
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const apiKey = typeof ctx.config.apiKey === "string" ? ctx.config.apiKey.trim() : "";
-  const baseUrl =
-    typeof ctx.config.baseUrl === "string" && ctx.config.baseUrl.trim()
-      ? ctx.config.baseUrl.trim().replace(/\/$/, "")
-      : DEFAULT_KIMI_BASE_URL;
+  const baseUrl = getBaseUrl(ctx.config);
 
   if (!apiKey) {
     return {
-      exitCode: 1,
-      signal: null,
-      timedOut: false,
+      exitCode: 1, signal: null, timedOut: false,
       errorMessage: "Kimi API key not configured. Set apiKey in agent configuration.",
     };
   }
@@ -43,32 +44,32 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       : "You are a senior software engineer. Respond with clear, actionable output.";
 
   const task = getTask(ctx.context);
-  await ctx.onLog("stdout", `[kimi] model=${model}\n\n`);
+  await ctx.onLog("stdout", `[kimi] model=${model} endpoint=${baseUrl}\n\n`);
 
   let inputTokens = 0;
   let outputTokens = 0;
 
   try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    // Kimi Code uses Anthropic-compatible API
+    const res = await fetch(`${baseUrl}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
         model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: task },
-        ],
+        max_tokens: 8192,
+        system: systemPrompt,
+        messages: [{ role: "user", content: task }],
         stream: true,
-        stream_options: { include_usage: true },
       }),
     });
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`Moonshot API ${res.status}: ${errText.slice(0, 200)}`);
+      throw new Error(`Kimi API ${res.status}: ${errText.slice(0, 200)}`);
     }
 
     const reader = res.body?.getReader();
@@ -76,6 +77,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let eventType = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -86,19 +88,34 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       buffer = lines.pop() ?? "";
 
       for (const line of lines) {
-        const trimmed = line.replace(/^data: /, "").trim();
-        if (!trimmed || trimmed === "[DONE]") continue;
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+          continue;
+        }
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6).trim();
+        if (data === "[DONE]" || !data) continue;
+
         try {
-          const chunk = JSON.parse(trimmed);
-          const delta = chunk.choices?.[0]?.delta?.content ?? "";
-          if (delta) await ctx.onLog("stdout", delta);
-          if (chunk.usage) {
-            inputTokens = chunk.usage.prompt_tokens ?? 0;
-            outputTokens = chunk.usage.completion_tokens ?? 0;
+          const chunk = JSON.parse(data);
+
+          // Anthropic SSE: content_block_delta carries text
+          if (eventType === "content_block_delta" || chunk.type === "content_block_delta") {
+            const text = chunk.delta?.text ?? "";
+            if (text) await ctx.onLog("stdout", text);
+          }
+
+          // Usage in message_start or message_delta
+          if (chunk.type === "message_start" && chunk.message?.usage) {
+            inputTokens = chunk.message.usage.input_tokens ?? 0;
+          }
+          if (chunk.type === "message_delta" && chunk.usage) {
+            outputTokens = chunk.usage.output_tokens ?? 0;
           }
         } catch {
-          // skip malformed SSE line
+          // skip malformed line
         }
+        eventType = "";
       }
     }
 
@@ -106,18 +123,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await ctx.onLog("stderr", `[kimi] error: ${msg}\n`);
-    return { exitCode: 1, signal: null, timedOut: false, errorMessage: msg, provider: "moonshot", model };
+    return { exitCode: 1, signal: null, timedOut: false, errorMessage: msg, provider: "kimi", model };
   }
 
   const costUsd = inputTokens * 0.0000006 + outputTokens * 0.0000025;
 
   return {
-    exitCode: 0,
-    signal: null,
-    timedOut: false,
-    model,
-    provider: "moonshot",
-    billingType: "api",
+    exitCode: 0, signal: null, timedOut: false,
+    model, provider: "kimi", billingType: "api",
     usage: { inputTokens, outputTokens },
     costUsd,
     summary: `Kimi ${model} — in:${inputTokens} out:${outputTokens}`,
@@ -128,10 +141,7 @@ export async function testEnvironment(
   ctx: import("@paperclipai/adapter-utils").AdapterEnvironmentTestContext,
 ): Promise<import("@paperclipai/adapter-utils").AdapterEnvironmentTestResult> {
   const apiKey = typeof ctx.config.apiKey === "string" ? ctx.config.apiKey.trim() : "";
-  const baseUrl =
-    typeof ctx.config.baseUrl === "string" && ctx.config.baseUrl.trim()
-      ? ctx.config.baseUrl.trim().replace(/\/$/, "")
-      : DEFAULT_KIMI_BASE_URL;
+  const baseUrl = getBaseUrl(ctx.config);
   const now = new Date().toISOString();
 
   if (!apiKey) {
@@ -141,19 +151,8 @@ export async function testEnvironment(
     };
   }
 
-  // Validate key format only — live API check skipped to avoid 401s from endpoint mismatches.
-  // Real connectivity is verified on first agent run.
-  const looksValid = apiKey.length > 10;
-  if (!looksValid) {
-    return {
-      adapterType: ctx.adapterType, status: "fail", testedAt: now,
-      checks: [{ code: "kimi_api_key_invalid", level: "error", message: "Moonshot API key looks invalid (too short)" }],
-    };
-  }
   return {
     adapterType: ctx.adapterType, status: "pass", testedAt: now,
-    checks: [
-      { code: "kimi_api_key_present", level: "info", message: `Moonshot API key configured (${baseUrl})` },
-    ],
+    checks: [{ code: "kimi_ready", level: "info", message: `Kimi Code configured — ${baseUrl}` }],
   };
 }

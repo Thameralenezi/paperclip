@@ -2,7 +2,7 @@ export const type = "kimi_local";
 export const label = "Kimi (Moonshot)";
 
 export const DEFAULT_KIMI_MODEL = "kimi-k2.7";
-export const DEFAULT_KIMI_BASE_URL = "https://api.moonshot.ai/v1";
+export const DEFAULT_KIMI_BASE_URL = "https://api.kimi.com/coding/v1";
 
 export const models = [
   { id: "kimi-k2.7", label: "Kimi K2.7 (Code)" },
