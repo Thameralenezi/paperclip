@@ -37,6 +37,27 @@ export function KimiLocalConfigFields({
       </Field>
 
       <Field
+        label="Base URL"
+        hint="Kimi Code API endpoint. Default: https://api.moonshot.ai/v1"
+      >
+        <DraftInput
+          value={
+            isCreate
+              ? values?.url ?? ""
+              : eff("adapterConfig", "baseUrl", String(config.baseUrl ?? ""))
+          }
+          onCommit={(v) =>
+            isCreate
+              ? set?.({ url: v })
+              : mark("adapterConfig", "baseUrl", v || undefined)
+          }
+          immediate
+          className={inputClass}
+          placeholder="https://api.moonshot.ai/v1"
+        />
+      </Field>
+
+      <Field
         label="System prompt"
         hint="Optional custom system prompt. Defaults to senior software engineer persona."
       >

@@ -5,5 +5,6 @@ export function buildKimiLocalConfig(v: CreateConfigValues): Record<string, unkn
   const ac: Record<string, unknown> = {};
   ac.model = v.model || DEFAULT_KIMI_MODEL;
   if (v.promptTemplate) ac.systemPrompt = v.promptTemplate;
+  if (v.url) ac.baseUrl = v.url;
   return ac;
 }
