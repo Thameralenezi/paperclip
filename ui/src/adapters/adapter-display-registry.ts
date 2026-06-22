@@ -93,6 +93,11 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     description: "Local Hermes CLI agent",
     icon: HermesIcon,
   },
+  kimi_local: {
+    label: "Kimi",
+    description: "Moonshot AI — Kimi K2 coding agent via API",
+    icon: Sparkles,
+  },
   pi_local: {
     label: "Pi",
     description: "Local Pi agent",
