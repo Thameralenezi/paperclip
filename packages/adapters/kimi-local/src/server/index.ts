@@ -50,7 +50,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   let outputTokens = 0;
 
   try {
-    // Kimi Code uses Anthropic-compatible API
+    // Non-streaming request — more reliable across Anthropic-compatible APIs
     const res = await fetch(`${baseUrl}/messages`, {
       method: "POST",
       headers: {
@@ -63,62 +63,40 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         max_tokens: 8192,
         system: systemPrompt,
         messages: [{ role: "user", content: task }],
-        stream: true,
+        stream: false,
       }),
     });
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`Kimi API ${res.status}: ${errText.slice(0, 200)}`);
+      throw new Error(`Kimi API ${res.status}: ${errText.slice(0, 300)}`);
     }
 
-    const reader = res.body?.getReader();
-    if (!reader) throw new Error("No response body");
+    const rawText = await res.text();
 
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let eventType = "";
+    // Diagnostic: log first 500 chars of raw response so we can see the format
+    await ctx.onLog("stdout", `[kimi raw] ${rawText.slice(0, 500)}\n\n`);
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          eventType = line.slice(7).trim();
-          continue;
-        }
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6).trim();
-        if (data === "[DONE]" || !data) continue;
-
-        try {
-          const chunk = JSON.parse(data);
-
-          // Anthropic SSE: content_block_delta carries text
-          if (eventType === "content_block_delta" || chunk.type === "content_block_delta") {
-            const text = chunk.delta?.text ?? "";
-            if (text) await ctx.onLog("stdout", text);
-          }
-
-          // Usage in message_start or message_delta
-          if (chunk.type === "message_start" && chunk.message?.usage) {
-            inputTokens = chunk.message.usage.input_tokens ?? 0;
-          }
-          if (chunk.type === "message_delta" && chunk.usage) {
-            outputTokens = chunk.usage.output_tokens ?? 0;
-          }
-        } catch {
-          // skip malformed line
-        }
-        eventType = "";
-      }
+    let json: Record<string, unknown>;
+    try {
+      json = JSON.parse(rawText);
+    } catch {
+      throw new Error(`Kimi API returned non-JSON: ${rawText.slice(0, 200)}`);
     }
 
+    // Standard Anthropic non-streaming response:
+    // { content: [{type:"text", text:"..."}], usage: {input_tokens, output_tokens} }
+    const contentArr = json.content as Array<Record<string, unknown>> | undefined;
+    const text =
+      (contentArr?.[0]?.text as string | undefined) ??
+      (typeof json.content === "string" ? json.content : "") ??
+      "";
+
+    const usage = json.usage as Record<string, number> | undefined;
+    inputTokens = usage?.input_tokens ?? 0;
+    outputTokens = usage?.output_tokens ?? 0;
+
+    if (text) await ctx.onLog("stdout", text);
     await ctx.onLog("stdout", "\n");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
