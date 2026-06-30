@@ -14,5 +14,12 @@ COPY --chown=node:node packages/adapters/kimi-local/src packages/adapters/kimi-l
 RUN mkdir -p node_modules/@paperclipai && \
     ln -sfn /app/packages/adapters/kimi-local node_modules/@paperclipai/adapter-kimi-local
 
-# 3. Replace server dist with freshly compiled version (includes kimi registry entries)
+# 3. Replace server dist (includes kimi registry entries)
 COPY --chown=node:node server/dist server/dist
+
+# 4. Replace UI dist (includes kimi adapter display entry + config fields)
+COPY --chown=node:node ui/dist ui/dist
+
+# 5. Replace entrypoint so workspace bootstrap runs on every start
+COPY --chown=root:root scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh

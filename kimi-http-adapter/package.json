@@ -1,0 +1,15 @@
+{
+  "name": "kimi-http-adapter",
+  "version": "1.0.0",
+  "description": "Paperclip HTTP adapter — routes agent runs to Kimi (Moonshot AI)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "openai": "^4.52.0"
+  }
+}

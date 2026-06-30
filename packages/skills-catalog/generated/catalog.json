@@ -247,6 +247,42 @@
       "contentHash": "sha256:f22a9ed696e6614c6db2757a149f48b3295e81f78c27d065d9cb164cf4f8a9bd"
     },
     {
+      "id": "paperclipai:optional:education:gat-expert",
+      "key": "paperclipai/optional/education/gat-expert",
+      "kind": "optional",
+      "category": "education",
+      "slug": "gat-expert",
+      "name": "gat-expert",
+      "description": "Create, review, correct, and rewrite verbal and quantitative GAT questions following official Qiyas standards (Saudi Arabia), in native Arabic, with answers and concise explanations calibrated to real exam difficulty levels.",
+      "path": "catalog/optional/education/gat-expert",
+      "entrypoint": "SKILL.md",
+      "trustLevel": "markdown_only",
+      "compatibility": "compatible",
+      "defaultInstall": false,
+      "recommendedForRoles": [
+        "education",
+        "content",
+        "qa"
+      ],
+      "requires": [],
+      "tags": [
+        "gat",
+        "qiyas",
+        "arabic",
+        "education",
+        "saudi"
+      ],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3407,
+          "sha256": "f6868dac072cbe7eac0eec0318aa48c30171cde093ad858ca62c8ce58ff9e593"
+        }
+      ],
+      "contentHash": "sha256:f6868dac072cbe7eac0eec0318aa48c30171cde093ad858ca62c8ce58ff9e593"
+    },
+    {
       "id": "paperclipai:optional:product:design-critique",
       "key": "paperclipai/optional/product/design-critique",
       "kind": "optional",

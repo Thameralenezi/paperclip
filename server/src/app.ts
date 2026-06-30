@@ -165,6 +165,24 @@ export async function createApp(
     verify: captureRawBody,
   }));
   app.use(httpLogger);
+  // ALB health checks send Host: <container-private-ip> which the hostname
+  // guard rejects. Mount a minimal health probe before the guard so ECS
+  // target-group checks always pass regardless of Host header.
+  // Browser requests (with an allowed hostname) must fall through to the full
+  // health route so the UI receives deploymentMode/bootstrapStatus.
+  app.get("/api/health", (_req, res, next) => {
+    const raw = (_req.headers["x-forwarded-host"] ?? _req.headers.host ?? "").toString().toLowerCase();
+    // Strip port from host header (e.g. "paperclip.atahdak.com:443" → "paperclip.atahdak.com")
+    let host: string;
+    try { host = new URL(`http://${raw}`).hostname; } catch { host = raw.split(":")[0] ?? raw; }
+    // Loopback → let through to full health handler (container health check)
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") return next();
+    // Known allowed hostname → let through to full health handler (browser)
+    const allowed = opts.allowedHostnames.map((h) => h.toLowerCase().trim());
+    if (allowed.includes(host)) return next();
+    // Unknown host (ALB private IP) → return minimal 200 to pass health check
+    res.json({ status: "ok" });
+  });
   const privateHostnameGateEnabled = shouldEnablePrivateHostnameGuard({
     deploymentMode: opts.deploymentMode,
     deploymentExposure: opts.deploymentExposure,
