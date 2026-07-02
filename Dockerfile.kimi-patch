@@ -1,25 +1,47 @@
 # syntax=docker/dockerfile:1.20
-# Incremental patch: inject kimi adapter source + updated server dist.
-# Uses tsx loader already in the production image — zero new npm deps.
+# Incremental patch for kimi_code adapter deploy.
+# Builds UI + server inside Linux (avoids Windows Tailwind/build issues),
+# installs the Kimi CLI, then patches the running production base image.
+
+FROM node:lts-trixie-slim AS build
+ENV NODE_TLS_REJECT_UNAUTHORIZED=0
+ENV npm_config_strict_ssl=false
+WORKDIR /app
+
+# Copy full source (node_modules excluded by .dockerignore)
+COPY . .
+
+# Enable pnpm and install workspace dependencies
+RUN corepack enable && pnpm install --frozen-lockfile
+
+# Build packages in the same order as the main Dockerfile
+RUN pnpm --filter @paperclipai/ui build
+RUN pnpm --filter @paperclipai/plugin-sdk build
+RUN pnpm --filter @paperclipai/server build
+
+# Production patch stage
 FROM 606754308994.dkr.ecr.eu-north-1.amazonaws.com/cdk-hnb659fds-container-assets-606754308994-eu-north-1:paperclip-healthfix-1781011666
 
 WORKDIR /app
 
-# 1. Copy kimi-local package metadata + TypeScript source (no external deps)
-COPY --chown=node:node packages/adapters/kimi-local/package.json packages/adapters/kimi-local/package.json
-COPY --chown=node:node packages/adapters/kimi-local/tsconfig.json packages/adapters/kimi-local/tsconfig.json
-COPY --chown=node:node packages/adapters/kimi-local/src packages/adapters/kimi-local/src
+# Install Kimi CLI (required by the new kimi_code adapter)
+RUN apt-get update && apt-get install -y --no-install-recommends python3-pip && \
+    pip3 install --break-system-packages 'kimi-cli==1.41.0' && \
+    rm -rf /var/lib/apt/lists/*
 
-# 2. Create workspace symlink so Node resolves @paperclipai/adapter-kimi-local
+# Copy kimi-code package source and ensure workspace symlinks
+COPY --chown=node:node packages/adapters/kimi-code/package.json packages/adapters/kimi-code/package.json
+COPY --chown=node:node packages/adapters/kimi-code/tsconfig.json packages/adapters/kimi-code/tsconfig.json
+COPY --chown=node:node packages/adapters/kimi-code/src packages/adapters/kimi-code/src
 RUN mkdir -p node_modules/@paperclipai && \
-    ln -sfn /app/packages/adapters/kimi-local node_modules/@paperclipai/adapter-kimi-local
+    ln -sfn /app/packages/adapters/kimi-code node_modules/@paperclipai/adapter-kimi-code && \
+    mkdir -p packages/adapters/kimi-code/node_modules/@paperclipai && \
+    ln -sfn /app/packages/adapter-utils packages/adapters/kimi-code/node_modules/@paperclipai/adapter-utils
 
-# 3. Replace server dist (includes kimi registry entries)
-COPY --chown=node:node server/dist server/dist
+# Replace built artifacts with freshly built versions
+COPY --chown=node:node --from=build /app/server/dist server/dist
+COPY --chown=node:node --from=build /app/ui/dist ui/dist
 
-# 4. Replace UI dist (includes kimi adapter display entry + config fields)
-COPY --chown=node:node ui/dist ui/dist
-
-# 5. Replace entrypoint so workspace bootstrap runs on every start
+# Update entrypoint so workspace bootstrap runs on every start
 COPY --chown=root:root scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

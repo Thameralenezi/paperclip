@@ -138,13 +138,16 @@ import {
   models as hermesModels,
 } from "hermes-paperclip-adapter";
 import {
-  execute as kimiExecute,
-  testEnvironment as kimiTestEnvironment,
-} from "@paperclipai/adapter-kimi-local/server";
+  execute as kimiCodeExecute,
+  testEnvironment as kimiCodeTestEnvironment,
+  sessionCodec as kimiCodeSessionCodec,
+  listKimiCodeSkills,
+  syncKimiCodeSkills,
+} from "@paperclipai/adapter-kimi-code/server";
 import {
-  agentConfigurationDoc as kimiAgentConfigurationDoc,
-  models as kimiModels,
-} from "@paperclipai/adapter-kimi-local";
+  agentConfigurationDoc as kimiCodeAgentConfigurationDoc,
+  models as kimiCodeModels,
+} from "@paperclipai/adapter-kimi-code";
 import { BUILTIN_ADAPTER_TYPES } from "./builtin-adapter-types.js";
 import { buildExternalAdapters } from "./plugin-loader.js";
 import { getDisabledAdapterTypes } from "../services/adapter-plugin-store.js";
@@ -445,15 +448,19 @@ const piLocalAdapter: ServerAdapterModule = {
 // intentional until hermes ships a matching AdapterExecutionContext type.
 const executeHermesLocal = hermesExecute as unknown as ServerAdapterModule["execute"];
 
-const kimiLocalAdapter: ServerAdapterModule = {
-  type: "kimi_local",
-  execute: kimiExecute,
-  testEnvironment: kimiTestEnvironment,
-  models: kimiModels,
+const kimiCodeAdapter: ServerAdapterModule = {
+  type: "kimi_code",
+  execute: kimiCodeExecute,
+  testEnvironment: kimiCodeTestEnvironment,
+  sessionCodec: kimiCodeSessionCodec,
+  listSkills: listKimiCodeSkills,
+  syncSkills: syncKimiCodeSkills,
+  models: kimiCodeModels,
   supportsLocalAgentJwt: true,
-  supportsInstructionsBundle: false,
+  supportsInstructionsBundle: true,
+  instructionsPathKey: "instructionsFilePath",
   requiresMaterializedRuntimeSkills: false,
-  agentConfigurationDoc: kimiAgentConfigurationDoc,
+  agentConfigurationDoc: kimiCodeAgentConfigurationDoc,
 };
 
 const hermesLocalAdapter: ServerAdapterModule = {
@@ -542,7 +549,7 @@ function registerBuiltInAdapters() {
     grokLocalAdapter,
     openclawGatewayAdapter,
     hermesLocalAdapter,
-    kimiLocalAdapter,
+    kimiCodeAdapter,
     processAdapter,
     httpAdapter,
   ]) {

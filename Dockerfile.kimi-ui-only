@@ -11,7 +11,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 # Copy all package.json files for pnpm workspace install
 COPY packages/adapter-utils/package.json packages/adapter-utils/
 COPY packages/shared/package.json packages/shared/
-COPY packages/adapters/kimi-local/package.json packages/adapters/kimi-local/
+COPY packages/adapters/kimi-code/package.json packages/adapters/kimi-code/
 COPY packages/adapters/acpx-local/package.json packages/adapters/acpx-local/
 COPY packages/adapters/claude-local/package.json packages/adapters/claude-local/
 COPY packages/adapters/codex-local/package.json packages/adapters/codex-local/

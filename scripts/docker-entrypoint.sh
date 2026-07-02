@@ -34,7 +34,7 @@ if [ -n "$CONTAINER_IP" ] && [ -n "$PAPERCLIP_ALLOWED_HOSTNAMES" ]; then
 fi
 
 # ─── Agent workspace bootstrap ──────────────────────────────────────────────
-# Ensure the Qiyas repo is available for claude_local / kimi_local agents.
+# Ensure the Qiyas repo is available for claude_local / kimi_code agents.
 # This runs as root before dropping to the node user so it can fix ownership.
 WORKSPACE_DIR="/paperclip/workspaces/qiyas"
 REPO_URL="https://github.com/Thameralenezi/Project-for-Qyias-Platfrom.git"

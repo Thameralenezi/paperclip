@@ -1,0 +1,179 @@
+﻿{
+    "taskRoleArn":  "arn:aws:iam::606754308994:role/paperclip-ecs-task",
+    "volumes":  [
+                    {
+                        "name":  "paperclip-data",
+                        "efsVolumeConfiguration":  {
+                                                       "fileSystemId":  "fs-0e53047f8be2cb4cb",
+                                                       "rootDirectory":  "/",
+                                                       "transitEncryption":  "ENABLED",
+                                                       "authorizationConfig":  {
+                                                                                   "accessPointId":  "fsap-024c7c3cd9e29d85e",
+                                                                                   "iam":  "ENABLED"
+                                                                               }
+                                                   }
+                    }
+                ],
+    "networkMode":  "awsvpc",
+    "cpu":  "1024",
+    "memory":  "2048",
+    "executionRoleArn":  "arn:aws:iam::606754308994:role/paperclip-ecs-execution",
+    "requiresCompatibilities":  [
+                                    "FARGATE"
+                                ],
+    "containerDefinitions":  [
+                                 {
+                                     "name":  "paperclip-server",
+                                     "image":  "606754308994.dkr.ecr.eu-north-1.amazonaws.com/cdk-hnb659fds-container-assets-606754308994-eu-north-1:kimi-adapter-202607020403",
+                                     "cpu":  0,
+                                     "links":  [
+
+                                               ],
+                                     "portMappings":  [
+                                                          {
+                                                              "containerPort":  3100,
+                                                              "hostPort":  3100,
+                                                              "protocol":  "tcp"
+                                                          }
+                                                      ],
+                                     "essential":  true,
+                                     "entryPoint":  [
+
+                                                    ],
+                                     "command":  [
+
+                                                 ],
+                                     "environment":  [
+                                                         {
+                                                             "name":  "PORT",
+                                                             "value":  "3100"
+                                                         },
+                                                         {
+                                                             "name":  "HOST",
+                                                             "value":  "0.0.0.0"
+                                                         },
+                                                         {
+                                                             "name":  "PAPERCLIP_HOME",
+                                                             "value":  "/paperclip"
+                                                         },
+                                                         {
+                                                             "name":  "PAPERCLIP_ALLOWED_HOSTNAMES",
+                                                             "value":  "paperclip.atahdak.com"
+                                                         },
+                                                         {
+                                                             "name":  "PAPERCLIP_PUBLIC_URL",
+                                                             "value":  "https://paperclip.atahdak.com"
+                                                         },
+                                                         {
+                                                             "name":  "DATABASE_URL",
+                                                             "value":  ""
+                                                         },
+                                                         {
+                                                             "name":  "HEARTBEAT_SCHEDULER_ENABLED",
+                                                             "value":  "true"
+                                                         },
+                                                         {
+                                                             "name":  "PAPERCLIP_INSTANCE_ID",
+                                                             "value":  "default"
+                                                         },
+                                                         {
+                                                             "name":  "NODE_ENV",
+                                                             "value":  "production"
+                                                         },
+                                                         {
+                                                             "name":  "PAPERCLIP_CONFIG",
+                                                             "value":  "/paperclip/instances/default/config.json"
+                                                         },
+                                                         {
+                                                             "name":  "SERVE_UI",
+                                                             "value":  "true"
+                                                         },
+                                                         {
+                                                             "name":  "PAPERCLIP_DEPLOYMENT_EXPOSURE",
+                                                             "value":  "private"
+                                                         },
+                                                         {
+                                                             "name":  "PAPERCLIP_DEPLOYMENT_MODE",
+                                                             "value":  "authenticated"
+                                                         },
+                                                         {
+                                                             "name":  "PAPERCLIP_MIGRATION_AUTO_APPLY",
+                                                             "value":  "true"
+                                                         }
+                                                     ],
+                                     "environmentFiles":  [
+
+                                                          ],
+                                     "mountPoints":  [
+                                                         {
+                                                             "sourceVolume":  "paperclip-data",
+                                                             "containerPath":  "/paperclip",
+                                                             "readOnly":  false
+                                                         }
+                                                     ],
+                                     "volumesFrom":  [
+
+                                                     ],
+                                     "secrets":  [
+                                                     {
+                                                         "name":  "BETTER_AUTH_SECRET",
+                                                         "valueFrom":  "arn:aws:secretsmanager:eu-north-1:606754308994:secret:paperclip/better-auth-secret-0ExQCe"
+                                                     },
+                                                     {
+                                                         "name":  "ANTHROPIC_API_KEY",
+                                                         "valueFrom":  "arn:aws:secretsmanager:eu-north-1:606754308994:secret:paperclip/anthropic-api-key-XaZe86:ANTHROPIC_API_KEY::"
+                                                     },
+                                                     {
+                                                         "name":  "GITHUB_TOKEN",
+                                                         "valueFrom":  "arn:aws:secretsmanager:eu-north-1:606754308994:secret:paperclip/github-token-PSZ815"
+                                                     }
+                                                 ],
+                                     "dnsServers":  [
+
+                                                    ],
+                                     "dnsSearchDomains":  [
+
+                                                          ],
+                                     "extraHosts":  [
+
+                                                    ],
+                                     "dockerSecurityOptions":  [
+
+                                                               ],
+                                     "dockerLabels":  {
+
+                                                      },
+                                     "ulimits":  [
+
+                                                 ],
+                                     "logConfiguration":  {
+                                                              "logDriver":  "awslogs",
+                                                              "options":  {
+                                                                              "awslogs-group":  "/ecs/paperclip",
+                                                                              "awslogs-region":  "eu-north-1",
+                                                                              "awslogs-stream-prefix":  "server"
+                                                                          },
+                                                              "secretOptions":  [
+
+                                                                                ]
+                                                          },
+                                     "healthCheck":  {
+                                                         "command":  [
+                                                                         "CMD-SHELL",
+                                                                         "curl -f http://localhost:3100/api/health || exit 1"
+                                                                     ],
+                                                         "interval":  30,
+                                                         "timeout":  10,
+                                                         "retries":  3,
+                                                         "startPeriod":  120
+                                                     },
+                                     "systemControls":  [
+
+                                                        ],
+                                     "credentialSpecs":  [
+
+                                                         ]
+                                 }
+                             ],
+    "family":  "paperclip-server"
+}

@@ -38,10 +38,16 @@ $newTd = @{
     memory = $td.memory
 }
 
-$tdJson = $newTd | ConvertTo-Json -Depth 20 -Compress
+$tmpFile = Join-Path $env:TEMP "paperclip-task-def-$TAG.json"
+$tdJson = $newTd | ConvertTo-Json -Depth 20
+# Write UTF-8 without BOM so AWS CLI can parse the file.
+[System.IO.File]::WriteAllText($tmpFile, $tdJson)
+
 $newTdResult = aws ecs register-task-definition `
     --region $REGION `
-    --cli-input-json $tdJson | ConvertFrom-Json
+    --cli-input-json "file://$tmpFile" | ConvertFrom-Json
+
+Remove-Item -Path $tmpFile -Force
 
 $newRevision = $newTdResult.taskDefinition.taskDefinitionArn
 Write-Host "New task definition: $newRevision" -ForegroundColor Green

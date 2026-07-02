@@ -10,7 +10,7 @@ import { openCodeLocalUIAdapter } from "./opencode-local";
 import { piLocalUIAdapter } from "./pi-local";
 import { openClawGatewayUIAdapter } from "./openclaw-gateway";
 import { hermesLocalUIAdapter } from "./hermes-local";
-import { kimiLocalUIAdapter } from "./kimi-local";
+import { kimiCodeUIAdapter } from "./kimi-code";
 import { processUIAdapter } from "./process";
 import { httpUIAdapter } from "./http";
 import { loadDynamicParser, invalidateDynamicParser, setDynamicParserResultNotifier } from "./dynamic-loader";
@@ -60,7 +60,7 @@ function registerBuiltInUIAdapters() {
     geminiLocalUIAdapter,
     grokLocalUIAdapter,
     hermesLocalUIAdapter,
-    kimiLocalUIAdapter,
+    kimiCodeUIAdapter,
     openCodeLocalUIAdapter,
     piLocalUIAdapter,
     cursorLocalUIAdapter,
