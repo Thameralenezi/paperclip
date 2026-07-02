@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type {
@@ -31,28 +32,106 @@ function readEnv(config: Record<string, unknown>): Record<string, string> {
   return result;
 }
 
+type KimiOAuthCredentials = {
+  access_token: string;
+  refresh_token?: string;
+  expires_at?: number;
+  token_type?: string;
+  scope?: string;
+};
+
+function parseOAuthCredentials(value: string): KimiOAuthCredentials | null {
+  if (!value.trim().startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (typeof parsed.access_token !== "string" || parsed.access_token.length === 0) {
+      return null;
+    }
+    return parsed as KimiOAuthCredentials;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Kimi Code CLI does not automatically read `KIMI_API_KEY` from the process
- * environment. It resolves credentials from `~/.kimi/config.toml` or from a
- * temporary model synthesized via the `KIMI_MODEL_*` environment variables.
- * When an API key is supplied, promote it into the env-model variables so the
- * CLI can run in a pristine container without a pre-existing config file.
+ * Kimi Code CLI reads credentials from `~/.kimi/config.toml`, not from the
+ * process environment. When an API key is supplied via Paperclip secrets,
+ * write a temporary config file into an isolated home directory and point the
+ * CLI at it so the adapter works in a pristine container.
+ *
+ * If the supplied value is a JSON credential blob (access_token, refresh_token,
+ * etc.) we assume it is a Kimi Code managed-service OAuth credential and write
+ * the provider config for `managed:kimi-code`.
  */
-function applyKimiModelEnv(
+async function ensureKimiHome(
   env: Record<string, string>,
+  apiKey: string,
   model: string,
   config: Record<string, unknown>,
-): boolean {
-  const apiKey = env.KIMI_API_KEY;
-  if (!apiKey || apiKey.trim().length === 0) return false;
+  runId: string,
+): Promise<string> {
+  const home = path.join(os.tmpdir(), `kimi-home-${runId}`);
+  const kimiDir = path.join(home, ".kimi");
+  await fs.mkdir(kimiDir, { recursive: true });
 
-  env.KIMI_MODEL_NAME = model;
-  env.KIMI_MODEL_API_KEY = apiKey;
-  const providerType = asString(config.providerType, "").trim() || "kimi";
-  env.KIMI_MODEL_PROVIDER_TYPE = providerType;
-  const baseUrl = asString(config.baseUrl, "").trim();
-  if (baseUrl) env.KIMI_MODEL_BASE_URL = baseUrl;
-  return true;
+  const oauth = parseOAuthCredentials(apiKey);
+  const configPath = path.join(kimiDir, "config.toml");
+
+  if (oauth) {
+    // Kimi Code managed service (OAuth) configuration.
+    const managedModel = "kimi-code/kimi-for-coding";
+    const credentialsDir = path.join(kimiDir, "credentials");
+    await fs.mkdir(credentialsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(credentialsDir, "kimi-code.json"),
+      JSON.stringify(oauth, null, 2),
+      { mode: 0o600 },
+    );
+
+    const lines: string[] = [
+      `default_model = "${managedModel}"`,
+      "",
+      `[providers."managed:kimi-code"]`,
+      `type = "kimi"`,
+      `base_url = "https://api.kimi.com/coding/v1"`,
+      `api_key = ""`,
+      "",
+      `[providers."managed:kimi-code".oauth]`,
+      `storage = "file"`,
+      `key = "oauth/kimi-code"`,
+      "",
+      `[models."${managedModel}"]`,
+      `provider = "managed:kimi-code"`,
+      `model = "kimi-for-coding"`,
+      `max_context_size = 262144`,
+    ];
+    await fs.writeFile(configPath, lines.join("\n"), { mode: 0o600 });
+  } else {
+    // Plain API key configuration (Moonshot OpenAI-compatible endpoint by default).
+    const providerType = asString(config.providerType, "").trim() || "kimi";
+    const baseUrl = asString(config.baseUrl, "").trim() || "https://api.moonshot.ai/v1";
+
+    const lines: string[] = [
+      `default_model = "${model}"`,
+      "",
+      `[providers.kimi]`,
+      `type = "${providerType}"`,
+      `base_url = "${baseUrl}"`,
+      `api_key = "${apiKey}"`,
+      "",
+      `[models."${model}"]`,
+      `provider = "kimi"`,
+      `model = "${model}"`,
+      `max_context_size = 262144`,
+    ];
+    await fs.writeFile(configPath, lines.join("\n"), { mode: 0o600 });
+  }
+
+  // Point the CLI's home directory at our ephemeral directory so it reads
+  // ~/.kimi/config.toml from there instead of the container image's home.
+  env.HOME = home;
+  env.KIMI_HOME = home;
+  return configPath;
 }
 
 function buildPrompt(ctx: AdapterExecutionContext): string {
@@ -168,10 +247,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const env = readEnv(config);
   env.PAPERCLIP_RUN_ID = runId;
   if (authToken) env.PAPERCLIP_API_KEY = authToken;
-  const usingEnvModel = applyKimiModelEnv(env, model, config);
+  const apiKey = env.KIMI_API_KEY;
+  const hasApiKey = typeof apiKey === "string" && apiKey.trim().length > 0;
+  let configFile: string | null = null;
+  if (hasApiKey) {
+    configFile = await ensureKimiHome(env, apiKey, model, config, runId);
+  }
   await onLog(
     "stdout",
-    `[paperclip] Kimi adapter env: KIMI_API_KEY=${env.KIMI_API_KEY ? "set" : "unset"}, envModelOverride=${usingEnvModel}, model=${model}\n`,
+    `[paperclip] Kimi adapter env: KIMI_API_KEY=${hasApiKey ? "set" : "unset"}, kimiHome=${env.KIMI_HOME ?? "default"}, configFile=${configFile ?? "default"}, model=${model}\n`,
   );
 
   const extraArgs = asStringArray(config.extraArgs);
@@ -194,10 +278,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     "stream-json",
     "--yolo",
   ];
-  // When the adapter synthesizes a temporary model via KIMI_MODEL_*, do not
-  // pass --model: the CLI resolves the model from the env vars only when no
-  // --model alias is supplied at startup.
-  if (!usingEnvModel && model && model !== DEFAULT_KIMI_CODE_MODEL) {
+  if (configFile) {
+    args.push("--config-file", configFile);
+  }
+  // When we wrote a temporary config.toml, default_model is already set to
+  // the selected model. Otherwise fall back to the CLI argument.
+  if (!hasApiKey && model && model !== DEFAULT_KIMI_CODE_MODEL) {
     args.push("--model", model);
   }
   if (sessionId) {

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.20
 # Incremental patch for kimi_code adapter deploy.
-# Builds UI + server inside Linux (avoids Windows Tailwind/build issues),
+# Builds UI + server inside Linux (avoids Windows Tailwalk/build issues),
 # installs the Kimi CLI, then patches the running production base image.
 
 FROM node:lts-trixie-slim AS build
@@ -12,7 +12,7 @@ WORKDIR /app
 COPY . .
 
 # Enable pnpm and install workspace dependencies
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN corepack enable && pnpm install
 
 # Build packages in the same order as the main Dockerfile
 RUN pnpm --filter @paperclipai/ui build
@@ -29,14 +29,48 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3-pip && 
     pip3 install --break-system-packages 'kimi-cli==1.41.0' && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy kimi-code package source and ensure workspace symlinks
-COPY --chown=node:node packages/adapters/kimi-code/package.json packages/adapters/kimi-code/package.json
-COPY --chown=node:node packages/adapters/kimi-code/tsconfig.json packages/adapters/kimi-code/tsconfig.json
-COPY --chown=node:node packages/adapters/kimi-code/src packages/adapters/kimi-code/src
+# Overlay fresh workspace *source* from the Linux build while keeping the
+# production base image's node_modules intact. This avoids the dependency-store
+# mismatch that occurs when copying package node_modules between builds.
+COPY --chown=node:node --from=build /app/packages /tmp/new-packages
+RUN set -e; \
+    # Core shared packages: src only (runtime resolves via tsx source maps)
+    for pkg in adapter-utils shared db; do \
+      rm -rf "/app/packages/$pkg/src"; \
+      cp -R "/tmp/new-packages/$pkg/src" "/app/packages/$pkg/"; \
+    done; \
+    # plugin-sdk: we need the freshly-built dist plus current src
+    rm -rf /app/packages/plugins/sdk/src /app/packages/plugins/sdk/dist; \
+    cp -R /tmp/new-packages/plugins/sdk/src /app/packages/plugins/sdk/; \
+    cp -R /tmp/new-packages/plugins/sdk/dist /app/packages/plugins/sdk/; \
+    # Adapters: overlay src on existing adapters; copy whole dir for new ones
+    for srcdir in /tmp/new-packages/adapters/*/; do \
+      name=$(basename "$srcdir"); \
+      if [ -d "/app/packages/adapters/$name" ]; then \
+        rm -rf "/app/packages/adapters/$name/src"; \
+        cp -R "$srcdir/src" "/app/packages/adapters/$name/"; \
+        for f in "$srcdir"/*.cjs; do [ -e "$f" ] && cp "$f" "/app/packages/adapters/$name/"; done; \
+      else \
+        cp -R "$srcdir" "/app/packages/adapters/"; \
+      fi; \
+    done; \
+    rm -rf /tmp/new-packages
+
+# Ensure every workspace package is resolvable from the repository root,
+# which fixes imports for packages not listed as server dependencies
+# (e.g. the new hermes and kimi-code adapters).
 RUN mkdir -p node_modules/@paperclipai && \
-    ln -sfn /app/packages/adapters/kimi-code node_modules/@paperclipai/adapter-kimi-code && \
-    mkdir -p packages/adapters/kimi-code/node_modules/@paperclipai && \
-    ln -sfn /app/packages/adapter-utils packages/adapters/kimi-code/node_modules/@paperclipai/adapter-utils
+    ln -sfn /app/packages/adapter-utils node_modules/@paperclipai/adapter-utils && \
+    ln -sfn /app/packages/shared node_modules/@paperclipai/shared && \
+    ln -sfn /app/packages/db node_modules/@paperclipai/db && \
+    ln -sfn /app/packages/plugins/sdk node_modules/@paperclipai/plugin-sdk && \
+    ln -sfn /app/packages/skills-catalog node_modules/@paperclipai/skills-catalog && \
+    ln -sfn /app/packages/mcp-server node_modules/@paperclipai/mcp-server && \
+    for dir in /app/packages/adapters/*/; do \
+      name=$(basename "$dir"); \
+      pkg=$(node -e "console.log(require('/app/packages/adapters/' + process.argv[1] + '/package.json').name.split('/').pop())" "$name"); \
+      ln -sfn "/app/packages/adapters/$name" "node_modules/@paperclipai/$pkg"; \
+    done
 
 # Replace built artifacts with freshly built versions
 COPY --chown=node:node --from=build /app/server/dist server/dist

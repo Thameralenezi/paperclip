@@ -26,6 +26,9 @@ const ctx = {
     graceSec: 5,
     model: "kimi-k2",
     promptTemplate: "Say hello and then exit immediately.",
+    env: {
+      KIMI_API_KEY: process.env.KIMI_API_KEY ?? "",
+    },
   },
   context: {
     paperclipWake: {

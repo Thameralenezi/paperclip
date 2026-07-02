@@ -4,6 +4,8 @@ import type {
   AdapterRuntimeCommandSpec,
   ServerAdapterModule,
 } from "./types.js";
+import { parseAdapterModelsEnv } from "../services/adapter-models-env.js";
+import { stampClaudeAgentIdHeader } from "./claude-agent-id-header.js";
 import {
   buildSandboxNpmInstallCommand,
   getAdapterSessionManagement,
@@ -91,6 +93,10 @@ import {
   models as grokModels,
 } from "@paperclipai/adapter-grok-local";
 import {
+  createHermesGatewayServerAdapter,
+  createHermesLocalServerAdapter,
+} from "@paperclipai/hermes-paperclip-adapter";
+import {
   execute as openCodeExecute,
   listOpenCodeSkills,
   syncOpenCodeSkills,
@@ -132,11 +138,11 @@ import {
   listSkills as hermesListSkills,
   syncSkills as hermesSyncSkills,
   detectModel as detectModelFromHermes,
-} from "hermes-paperclip-adapter/server";
+} from "@paperclipai/hermes-paperclip-adapter/server";
 import {
   agentConfigurationDoc as hermesAgentConfigurationDoc,
   models as hermesModels,
-} from "hermes-paperclip-adapter";
+} from "@paperclipai/hermes-paperclip-adapter";
 import {
   execute as kimiCodeExecute,
   testEnvironment as kimiCodeTestEnvironment,
@@ -193,37 +199,6 @@ function buildCursorRuntimeCommandSpec(config: Record<string, unknown>): Adapter
   };
 }
 
-function normalizeHermesConfig<T extends { config?: unknown; agent?: unknown }>(ctx: T): T {
-  const config =
-    ctx && typeof ctx === "object" && "config" in ctx && ctx.config && typeof ctx.config === "object"
-      ? (ctx.config as Record<string, unknown>)
-      : null;
-  const agent =
-    ctx && typeof ctx === "object" && "agent" in ctx && ctx.agent && typeof ctx.agent === "object"
-      ? (ctx.agent as Record<string, unknown>)
-      : null;
-  const agentAdapterConfig =
-    agent?.adapterConfig && typeof agent.adapterConfig === "object"
-      ? (agent.adapterConfig as Record<string, unknown>)
-      : null;
-
-  const configCommand =
-    typeof config?.command === "string" && config.command.length > 0 ? config.command : undefined;
-  const agentCommand =
-    typeof agentAdapterConfig?.command === "string" && agentAdapterConfig.command.length > 0
-      ? agentAdapterConfig.command
-      : undefined;
-
-  if (config && !config.hermesCommand && configCommand) {
-    config.hermesCommand = configCommand;
-  }
-  if (agentAdapterConfig && !agentAdapterConfig.hermesCommand && agentCommand) {
-    agentAdapterConfig.hermesCommand = agentCommand;
-  }
-
-  return ctx;
-}
-
 function dedupeAdapterModels(models: AdapterModel[]): AdapterModel[] {
   const seen = new Set<string>();
   const result: AdapterModel[] = [];
@@ -258,7 +233,7 @@ async function listAcpxModels(): Promise<AdapterModel[]> {
 
 const claudeLocalAdapter: ServerAdapterModule = {
   type: "claude_local",
-  execute: claudeExecute,
+  execute: stampClaudeAgentIdHeader(claudeExecute),
   testEnvironment: claudeTestEnvironment,
   listSkills: listClaudeSkills,
   syncSkills: syncClaudeSkills,
@@ -394,6 +369,10 @@ const grokLocalAdapter: ServerAdapterModule = {
   agentConfigurationDoc: grokAgentConfigurationDoc,
 };
 
+const hermesGatewayAdapter = createHermesGatewayServerAdapter();
+
+const hermesLocalAdapter = createHermesLocalServerAdapter();
+
 const openclawGatewayAdapter: ServerAdapterModule = {
   type: "openclaw_gateway",
   execute: openclawGatewayExecute,
@@ -463,68 +442,6 @@ const kimiCodeAdapter: ServerAdapterModule = {
   agentConfigurationDoc: kimiCodeAgentConfigurationDoc,
 };
 
-const hermesLocalAdapter: ServerAdapterModule = {
-  type: "hermes_local",
-  execute: async (ctx) => {
-    const normalizedCtx = normalizeHermesConfig(ctx);
-    if (!normalizedCtx.authToken) return executeHermesLocal(normalizedCtx);
-
-    const existingConfig = (normalizedCtx.agent.adapterConfig ?? {}) as Record<string, unknown>;
-    const existingEnv =
-      typeof existingConfig.env === "object" && existingConfig.env !== null && !Array.isArray(existingConfig.env)
-        ? (existingConfig.env as Record<string, string>)
-        : {};
-    const explicitApiKey =
-      typeof existingEnv.PAPERCLIP_API_KEY === "string" && existingEnv.PAPERCLIP_API_KEY.trim().length > 0;
-    const promptTemplate =
-      typeof existingConfig.promptTemplate === "string" && existingConfig.promptTemplate.trim().length > 0
-        ? existingConfig.promptTemplate
-        : "";
-    const authGuardPrompt = [
-      "Paperclip API safety rule:",
-      "Use Authorization: Bearer $PAPERCLIP_API_KEY on every Paperclip API request.",
-      "Use X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID on every Paperclip API request that writes or mutates data, including comments and issue updates.",
-      "Never use a board, browser, or local-board session for Paperclip API writes.",
-    ].join("\n");
-
-    const patchedConfig: Record<string, unknown> = {
-      ...existingConfig,
-      env: {
-        ...existingEnv,
-        ...(!explicitApiKey ? { PAPERCLIP_API_KEY: normalizedCtx.authToken } : {}),
-        PAPERCLIP_RUN_ID: normalizedCtx.runId,
-      },
-    };
-
-    // Only inject the auth guard into promptTemplate when a custom template already exists.
-    // When no custom template is set, Hermes uses its built-in default heartbeat/task prompt —
-    // overwriting it with only the auth guard text would strip the assigned issue/workflow instructions.
-    if (promptTemplate) {
-      patchedConfig.promptTemplate = `${authGuardPrompt}\n\n${promptTemplate}`;
-    }
-
-    const patchedCtx = {
-      ...normalizedCtx,
-      agent: {
-        ...normalizedCtx.agent,
-        adapterConfig: patchedConfig,
-      },
-    };
-
-    return executeHermesLocal(patchedCtx);
-  },
-  testEnvironment: (ctx) => hermesTestEnvironment(normalizeHermesConfig(ctx) as never),
-  sessionCodec: hermesSessionCodec,
-  listSkills: hermesListSkills,
-  syncSkills: hermesSyncSkills,
-  models: hermesModels,
-  supportsLocalAgentJwt: true,
-  supportsInstructionsBundle: false,
-  requiresMaterializedRuntimeSkills: false,
-  agentConfigurationDoc: hermesAgentConfigurationDoc,
-  detectModel: () => detectModelFromHermes(),
-};
-
 const adaptersByType = new Map<string, ServerAdapterModule>();
 
 // For builtin types that are overridden by an external adapter, we keep the
@@ -547,9 +464,10 @@ function registerBuiltInAdapters() {
     cursorLocalAdapter,
     geminiLocalAdapter,
     grokLocalAdapter,
-    openclawGatewayAdapter,
+    hermesGatewayAdapter,
     hermesLocalAdapter,
     kimiCodeAdapter,
+    openclawGatewayAdapter,
     processAdapter,
     httpAdapter,
   ]) {
@@ -681,7 +599,42 @@ export function getServerAdapter(type: string): ServerAdapterModule {
   return findActiveServerAdapter(type) ?? processAdapter;
 }
 
+/**
+ * Memoized view of PAPERCLIP_ADAPTER_MODELS, keyed by the raw env string so
+ * tests (and live env mutation) that change the variable are still observed.
+ * Parsing happens at most once per distinct raw value instead of per
+ * `listAdapterModels` request, and malformed values fail SOFT here: we log the
+ * parse error once (per distinct raw value) and fall back to adapter-discovered
+ * models rather than throwing at request time.
+ */
+let adapterModelsEnvCache: {
+  raw: string | undefined;
+  value: ReturnType<typeof parseAdapterModelsEnv>;
+} | null = null;
+
+function getDeclaredAdapterModels(): ReturnType<typeof parseAdapterModelsEnv> {
+  const raw = process.env.PAPERCLIP_ADAPTER_MODELS;
+  if (adapterModelsEnvCache && adapterModelsEnvCache.raw === raw) {
+    return adapterModelsEnvCache.value;
+  }
+  let value: ReturnType<typeof parseAdapterModelsEnv> = null;
+  try {
+    value = parseAdapterModelsEnv(process.env);
+  } catch (err) {
+    console.error(
+      "[paperclip] Invalid PAPERCLIP_ADAPTER_MODELS; ignoring declared model lists:",
+      err,
+    );
+  }
+  adapterModelsEnvCache = { raw, value };
+  return value;
+}
+
 export async function listAdapterModels(type: string): Promise<{ id: string; label: string }[]> {
+  const declaredModels = getDeclaredAdapterModels();
+  if (declaredModels && declaredModels[type]?.length) {
+    return declaredModels[type].map((m) => ({ id: m.id, label: m.label ?? m.id }));
+  }
   const adapter = findActiveServerAdapter(type);
   if (!adapter) return [];
   if (adapter.listModels) {
